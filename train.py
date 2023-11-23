@@ -34,6 +34,13 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
+def save_depth_map_vis(depth, path):
+    depth_np  = depth.detach().cpu().numpy().squeeze()
+    depth_norm = (depth_np - depth_np.min()) / (depth_np.max() - depth_np.min())
+    depth_norm = (depth_norm * 255).astype(np.uint8)
+    depth_norm = cv2.cvtColor(depth_norm, cv2.COLOR_GRAY2RGB)
+    cv2.imwrite(path, depth_norm)
+
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
@@ -108,11 +115,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         Ld = get_depth_loss(depth, gt_depth)
 
         if (iteration % 100 == 0):
-            depth_np  = depth.detach().cpu().numpy()
-            depth_norm = (depth_np - depth_np.min()) / (depth_np.max() - depth_np.min())
-            depth_norm = (depth_norm * 255).astype(np.uint8)
-            depth_norm = cv2.cvtColor(depth_norm, cv2.COLOR_GRAY2RGB)
-            cv2.imwrite(os.path.join(dataset.source_path, "depth", viewpoint_cam.image_name.replace(".jpg", ".png")), depth_norm)
+            os.makedirs(os.path.join(dataset.source_path, "debug"), exist_ok=True)
+            print("Saving debug depth image")
+            save_depth_map_vis(depth, os.path.join(dataset.source_path, "debug", viewpoint_cam.image_name + ".png"))
 
         loss += opt.lambda_smoothness * Ls + opt.lambda_depth * Ld
         

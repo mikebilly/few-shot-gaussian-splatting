@@ -103,18 +103,9 @@ def depth_error(x, weight, transformed_points, depth_map_points):
     return np.sum((weight * transformed_points[1][:, 2] - (depth_map_points * scale + offset))**2)
 
 
-def calculate_smoothness_loss(depth_maps):
-    # Canny edge detection
-    smoothness_loss = 0
-
-    for img_name in depth_maps:
-        depth_map = depth_maps[img_name]
-        edges = cv2.Canny(depth_map, 100, 200)
-        
-
 def find_optimal_offset_scale(weight, extrinsics, depth_maps, 
                               projected_points, transformed_points, intrinsic, 
-                              samples=100, ranges=[(0.5, 1.5), (-0.5, 0.5)]):
+                              samples=1000, ranges=[(0.5, 5), (-5, 5)]):
     
     adjusted_depth_maps = {}
 
@@ -136,21 +127,21 @@ def find_optimal_offset_scale(weight, extrinsics, depth_maps,
         scale = np.linspace(ranges[0][0], ranges[0][1], samples)
         offset = np.linspace(ranges[1][0], ranges[1][1], samples)
 
-        X, Y = np.meshgrid(scale, offset)
+        scale_m, offset_m = np.meshgrid(scale, offset)
 
         Z = np.zeros((samples, samples))
 
         for i in range(samples):
             for j in range(samples):
-                Z[i, j] = depth_error([X[i, j], Y[i, j]], weight, transformed_points, depth_map_points)
+                Z[i, j] = depth_error([scale_m[i, j], offset_m[i, j]], weight, transformed_points, depth_map_points)
         
         min_index = np.argmin(Z)
         
         i_min, j_min = np.unravel_index(min_index, Z.shape)
 
         # Get the corresponding scale and offset values
-        optimal_scale = X[i_min, j_min]
-        optimal_offset = Y[i_min, j_min]
+        optimal_scale = scale_m[i_min, j_min]
+        optimal_offset = offset_m[i_min, j_min]
 
         diff = weight * transformed_points[1][:, 2] - (depth_map_points * optimal_scale + optimal_offset)
         
@@ -189,7 +180,7 @@ def get_smoothness_loss(depth_map):
     diff += np.square(depth_map - dm_left)
 
     smoothness = diff * mask / 255
-    
+
     if (tensor):
         return torch.from_numpy(smoothness).cuda().mean()
     else:

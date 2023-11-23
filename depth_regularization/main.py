@@ -18,11 +18,13 @@ intrinsic = cam_intrinsics[1]
 
 reliability = 1/error
 
-min = np.percentile(reliability, 5)
-max = np.percentile(reliability, 95)
+min = np.percentile(reliability, 0)
+max = np.percentile(reliability, 70)
 
 weight = (reliability - min) / (max - min)
 weight = np.clip(weight, 0, 1).reshape(-1)
+
+#weight  = np.ones_like(weight)
 
 depth_adjusted = find_optimal_offset_scale(weight, extrinsics, depth_maps, 
                               projected_points, transformed_points, intrinsic)
