@@ -22,6 +22,12 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+import numpy as np
+import cv2
+
+from depth_regularization.proj_utils import get_smoothness_loss, get_depth_loss
+
+
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -84,12 +90,32 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
-        image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+        image, depth, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["depth"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
+        #depth_np  = depth.detach().cpu().numpy()
+        #np.save(os.path.join(dataset.source_path, "depth", viewpoint_cam.image_name), depth_np)
+        
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
+        gt_depth = viewpoint_cam.depth_map.cuda() * 255.0 / (2 ** 15)
+
         Ll1 = l1_loss(image, gt_image)
+
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+
+        # Depth regularization
+        Ls = get_smoothness_loss(depth)
+        Ld = get_depth_loss(depth, gt_depth)
+
+        if (iteration % 100 == 0):
+            depth_np  = depth.detach().cpu().numpy()
+            depth_norm = (depth_np - depth_np.min()) / (depth_np.max() - depth_np.min())
+            depth_norm = (depth_norm * 255).astype(np.uint8)
+            depth_norm = cv2.cvtColor(depth_norm, cv2.COLOR_GRAY2RGB)
+            cv2.imwrite(os.path.join(dataset.source_path, "depth", viewpoint_cam.image_name.replace(".jpg", ".png")), depth_norm)
+
+        loss += opt.lambda_smoothness * Ls + opt.lambda_depth * Ld
+        
         loss.backward()
 
         iter_end.record()
@@ -104,7 +130,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, get_depth_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -153,10 +179,11 @@ def prepare_output_and_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
+def training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, depth_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
+        tb_writer.add_scalar('train_loss_patches/depth_loss', Ld.item(), iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
 
     # Report test and samples of training set
@@ -168,15 +195,20 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
         for config in validation_configs:
             if config['cameras'] and len(config['cameras']) > 0:
                 l1_test = 0.0
+                ld_test = 0.0
                 psnr_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
-                    image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
+                    render = renderFunc(viewpoint, scene.gaussians, *renderArgs)
+                    image = torch.clamp(render['render'], 0.0, 1.0)
+                    depth = render['depth']
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
+                    gt_depth = viewpoint.depth_map.to("cuda") * 255.0 / (2 ** 15)
                     if tb_writer and (idx < 5):
                         tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
                         if iteration == testing_iterations[0]:
                             tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
+                    ld_test += depth_loss(depth, gt_depth).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
                 psnr_test /= len(config['cameras'])
                 l1_test /= len(config['cameras'])          

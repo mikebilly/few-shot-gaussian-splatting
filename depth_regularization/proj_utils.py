@@ -102,6 +102,16 @@ def depth_error(x, weight, transformed_points, depth_map_points):
     scale, offset = x
     return np.sum((weight * transformed_points[1][:, 2] - (depth_map_points * scale + offset))**2)
 
+
+def calculate_smoothness_loss(depth_maps):
+    # Canny edge detection
+    smoothness_loss = 0
+
+    for img_name in depth_maps:
+        depth_map = depth_maps[img_name]
+        edges = cv2.Canny(depth_map, 100, 200)
+        
+
 def find_optimal_offset_scale(weight, extrinsics, depth_maps, 
                               projected_points, transformed_points, intrinsic, 
                               samples=100, ranges=[(0.5, 1.5), (-0.5, 0.5)]):
@@ -150,6 +160,40 @@ def find_optimal_offset_scale(weight, extrinsics, depth_maps,
         adjusted_depth_maps[img_name] = depth_maps[img_name] * optimal_scale + optimal_offset
 
     return adjusted_depth_maps
+
+def get_depth_loss(raster_depth, image_depth):
+    if isinstance(raster_depth, torch.Tensor):
+        return torch.abs(raster_depth - image_depth).mean()
+    else:
+        return np.abs(raster_depth - image_depth).mean()
+
+def get_smoothness_loss(depth_map):
+    
+    tensor = False
+    if isinstance(depth_map, torch.Tensor):
+        tensor = True
+        depth_map = depth_map.detach().cpu().numpy().squeeze()
+    
+    depth_norm = (depth_map - depth_map.min()) / (depth_map.max() - depth_map.min())
+    edges = cv2.Canny((depth_norm*255).astype(np.uint8), 10, 50)
+    mask = 255 - cv2.dilate(edges, np.ones((3, 3), dtype=np.uint8), iterations=1)
+
+    dm_down = np.roll(depth_map, 1, axis=0)
+    dm_up = np.roll(depth_map, -1, axis=0)
+    dm_right = np.roll(depth_map, 1, axis=1)
+    dm_left = np.roll(depth_map, -1, axis=1)
+
+    diff =  np.square(depth_map - dm_down)
+    diff += np.square(depth_map - dm_up)
+    diff += np.square(depth_map - dm_right)
+    diff += np.square(depth_map - dm_left)
+
+    smoothness = diff * mask / 255
+    
+    if (tensor):
+        return torch.from_numpy(smoothness).cuda().mean()
+    else:
+        return smoothness.mean()
 
 if __name__ == "__main__":
 

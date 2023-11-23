@@ -32,6 +32,9 @@ class CameraInfo(NamedTuple):
     image: np.array
     image_path: str
     image_name: str
+    depth: np.array
+    depth_map_name: str
+
     width: int
     height: int
 
@@ -65,7 +68,8 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
+
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, depth_folder):
     cam_infos = []
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
@@ -97,9 +101,14 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         image_path = os.path.join(images_folder, os.path.basename(extr.name))
         image_name = os.path.basename(image_path).split(".")[0]
         image = Image.open(image_path)
+        
+        depth_name = os.path.basename(extr.name).split(".")[0] + ".png"
+        depth_path = os.path.join(depth_folder, depth_name)
+        depth_map_name = os.path.basename(depth_path).split(".")[0]
+        depth = Image.open(depth_path)
 
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                              image_path=image_path, image_name=image_name, width=width, height=height)
+                              image_path=image_path, image_name=image_name, depth=depth, depth_map_name= depth_map_name, width=width, height=height)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
@@ -129,7 +138,11 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, llffhold=8):
+def readColmapSceneInfoDepth(path, images, eval, llffhold=8):
+    return readColmapSceneInfo(path, images, eval, llffhold, True)
+
+
+def readColmapSceneInfo(path, images, eval, llffhold=8, depth=False):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -141,8 +154,13 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
+    depth_folder = None
+    if depth:
+        depth_folder = os.path.join(path, "depth")
+    
     reading_dir = "images" if images == None else images
-    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir))
+    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, 
+                        cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir), depth_folder=depth_folder)
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     if eval:
@@ -173,7 +191,8 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
                            train_cameras=train_cam_infos,
                            test_cameras=test_cam_infos,
                            nerf_normalization=nerf_normalization,
-                           ply_path=ply_path)
+                           ply_path=ply_path
+                           )
     return scene_info
 
 def readCamerasFromTransforms(path, transformsfile, white_background, extension=".png"):
@@ -256,5 +275,6 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
 
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
-    "Blender" : readNerfSyntheticInfo
+    "Blender" : readNerfSyntheticInfo,
+    "ColmapDepth": readColmapSceneInfoDepth
 }
