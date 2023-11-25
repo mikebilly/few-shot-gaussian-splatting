@@ -36,8 +36,8 @@ except ImportError:
 
 def save_depth_map_vis(depth, path):
     depth_np  = depth.detach().cpu().numpy().squeeze()
-    depth_norm = (depth_np - depth_np.min()) / (depth_np.max() - depth_np.min())
-    depth_norm = (depth_norm * 255).astype(np.uint8)
+    depth_norm = np.clip(depth_np * 4, 0, 255)
+    depth_norm = (depth_norm).astype(np.uint8)
     depth_norm = cv2.cvtColor(depth_norm, cv2.COLOR_GRAY2RGB)
     cv2.imwrite(path, depth_norm)
 
@@ -103,8 +103,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         #np.save(os.path.join(dataset.source_path, "depth", viewpoint_cam.image_name), depth_np)
         
         # Loss
+        depth_range = 200
         gt_image = viewpoint_cam.original_image.cuda()
-        gt_depth = viewpoint_cam.depth_map.cuda() * 255.0 / (2 ** 15)
+        gt_depth = viewpoint_cam.depth_map.cuda() * depth_range *  255.0 / (2 ** 16)
 
         Ll1 = l1_loss(image, gt_image)
 
@@ -114,7 +115,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         Ls = get_smoothness_loss(depth)
         Ld = get_depth_loss(depth, gt_depth)
 
-        if (iteration % 100 == 0):
+        if (iteration % 1000 == 0):
             os.makedirs(os.path.join(dataset.source_path, "debug"), exist_ok=True)
             print("Saving debug depth image")
             save_depth_map_vis(depth, os.path.join(dataset.source_path, "debug", viewpoint_cam.image_name + ".png"))
