@@ -22,10 +22,8 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
-import numpy as np
-import cv2
 
-from depth_regularization.proj_utils import get_smoothness_loss, get_depth_loss
+from depth_regularization.proj_utils import get_smoothness_loss
 
 
 try:
@@ -34,12 +32,6 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
-def save_depth_map_vis(depth, path):
-    depth_np  = depth.detach().cpu().numpy().squeeze()
-    depth_norm = np.clip(depth_np * 4, 0, 255)
-    depth_norm = (depth_norm).astype(np.uint8)
-    depth_norm = cv2.cvtColor(depth_norm, cv2.COLOR_GRAY2RGB)
-    cv2.imwrite(path, depth_norm)
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
@@ -113,12 +105,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # Depth regularization
         Ls = get_smoothness_loss(depth)
-        Ld = get_depth_loss(depth, gt_depth)
-
-        if (iteration % 1000 == 0):
-            os.makedirs(os.path.join(dataset.source_path, "debug"), exist_ok=True)
-            print("Saving debug depth image")
-            save_depth_map_vis(depth, os.path.join(dataset.source_path, "debug", viewpoint_cam.image_name + ".png"))
+        Ld = l1_loss(depth, gt_depth)
 
         loss += opt.lambda_smoothness * Ls + opt.lambda_depth * Ld
         
@@ -136,7 +123,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, get_depth_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -185,7 +172,7 @@ def prepare_output_and_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, depth_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
+def training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
@@ -203,25 +190,30 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, depth_loss, el
                 l1_test = 0.0
                 ld_test = 0.0
                 psnr_test = 0.0
+                depth_range = 200
                 for idx, viewpoint in enumerate(config['cameras']):
                     render = renderFunc(viewpoint, scene.gaussians, *renderArgs)
                     image = torch.clamp(render['render'], 0.0, 1.0)
                     depth = render['depth']
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
-                    gt_depth = viewpoint.depth_map.to("cuda") * 255.0 / (2 ** 15)
+                    gt_depth = viewpoint.depth_map.cuda() * depth_range *  255.0 / (2 ** 16)
                     if tb_writer and (idx < 5):
                         tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
+                        tb_writer.add_images(config['name'] + "_view_{}/depth".format(viewpoint.image_name), depth[None]/depth_range, global_step=iteration)
                         if iteration == testing_iterations[0]:
                             tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
+                            tb_writer.add_images(config['name'] + "_view_{}/ground_truth_depth".format(viewpoint.image_name), gt_depth[None]/depth_range, global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
-                    ld_test += depth_loss(depth, gt_depth).mean().double()
+                    ld_test += l1_loss(depth, gt_depth).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
                 psnr_test /= len(config['cameras'])
-                l1_test /= len(config['cameras'])          
+                l1_test /= len(config['cameras'])
+                ld_test /= len(config['cameras'])  
                 print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
                 if tb_writer:
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
+                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - depth_loss', ld_test, iteration)
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
@@ -238,7 +230,7 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[1_000, 2_000, 3_000, 7_000, 30_000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])

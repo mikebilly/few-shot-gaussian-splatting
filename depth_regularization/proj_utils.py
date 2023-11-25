@@ -164,12 +164,6 @@ def find_optimal_offset_scale(weight, extrinsics, depth_maps,
 
     return adjusted_depth_maps
 
-def get_depth_loss(raster_depth, image_depth):
-    if isinstance(raster_depth, torch.Tensor):
-        return torch.abs(raster_depth - image_depth).mean()
-    else:
-        return np.abs(raster_depth - image_depth).mean()
-
 def get_smoothness_loss(depth_map):
     
     tensor = False
