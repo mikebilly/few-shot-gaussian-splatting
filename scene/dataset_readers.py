@@ -156,7 +156,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, depth=False):
 
     depth_folder = None
     if depth:
-        depth_folder = os.path.join(path, "depth")
+        depth_folder = os.path.join(path, "depth_adjusted")
     
     reading_dir = "images" if images == None else images
     cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, 

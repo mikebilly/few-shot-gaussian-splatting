@@ -18,7 +18,7 @@ def create_depth_maps(dataset_path, save=False):
 
     for image in os.listdir(os.path.join(dataset_path,"images")):
         # if it is not an image, skip
-        if not (image.endswith(".jpg") or image.endswith(".png")):
+        if not (image.lower().endswith(".jpg") or image.endswith(".png")):
             continue
         img = Image.open(os.path.join(dataset_path, "images", image))
         depth = model_zoe_n.infer_pil(img)
@@ -27,7 +27,8 @@ def create_depth_maps(dataset_path, save=False):
         print("Created depth map for: ", image.split(".")[0])
         
         if (save):
-            depth = (depth*50).astype(np.uint8)
+            depth_norm = (depth - depth.min()) / (depth.max() - depth.min()) * 255
+            depth = (depth_norm).astype(np.uint8)
             depth = Image.fromarray(depth)
             depth.save(os.path.join(dataset_path, "depth", image.split(".")[0]+".png"))
             
@@ -64,7 +65,6 @@ def project_points_to_cameras(dataset_path):
     
     # Point cloud
     points3D_path = os.path.join(dataset_path,"sparse","0", "points3D.bin")
-    os.path.exists(points3D_path)
     xyz, rgb, errors = read_points3D_binary(points3D_path)
 
     # Cameras
@@ -100,19 +100,20 @@ def project_points_to_cameras(dataset_path):
 
 def depth_error(x, weight, transformed_points, depth_map_points):
     scale, offset = x
-    return np.sum((weight * transformed_points[1][:, 2] - (depth_map_points * scale + offset))**2)
-
+    return (weight *(transformed_points[:, 2] - (depth_map_points * scale + offset))**2).mean()
 
 def find_optimal_offset_scale(weight, extrinsics, depth_maps, 
                               projected_points, transformed_points, intrinsic, 
-                              samples=1000, ranges=[(0.5, 5), (-5, 5)]):
+                              samples=150, ranges=[(0.5, 15), (0, 5)], discard_extreme=True):
     
     adjusted_depth_maps = {}
 
     for img_name in depth_maps:
 
-        id = extrinsics[img_name].camera_id
+        id = extrinsics[img_name].id
+        print(id)
         projected = projected_points[id][:,:2]
+        transformed_points_id = transformed_points[id]
 
         # Scale projected points to depth map size
         scale_ratio = intrinsic.width / depth_maps[img_name].shape[1]
@@ -124,6 +125,16 @@ def find_optimal_offset_scale(weight, extrinsics, depth_maps,
 
         depth_map_points = depth_maps[img_name][index[:, 0], index[:, 1]]
 
+        # Discard extreme values
+        if discard_extreme:
+            diff = transformed_points_id[:, 2] - depth_map_points
+            high_thres = np.percentile(diff, 90)
+            transformed_points_id = transformed_points_id[diff < high_thres]
+            depth_map_points = depth_map_points[diff < high_thres]
+            weight_new = weight[diff < high_thres]
+        else:
+            weight_new = weight
+
         scale = np.linspace(ranges[0][0], ranges[0][1], samples)
         offset = np.linspace(ranges[1][0], ranges[1][1], samples)
 
@@ -133,7 +144,7 @@ def find_optimal_offset_scale(weight, extrinsics, depth_maps,
 
         for i in range(samples):
             for j in range(samples):
-                Z[i, j] = depth_error([scale_m[i, j], offset_m[i, j]], weight, transformed_points, depth_map_points)
+                Z[i, j] = depth_error([scale_m[i, j], offset_m[i, j]], weight_new, transformed_points_id, depth_map_points)
         
         min_index = np.argmin(Z)
         
@@ -143,12 +154,13 @@ def find_optimal_offset_scale(weight, extrinsics, depth_maps,
         optimal_scale = scale_m[i_min, j_min]
         optimal_offset = offset_m[i_min, j_min]
 
-        diff = weight * transformed_points[1][:, 2] - (depth_map_points * optimal_scale + optimal_offset)
+        diff = transformed_points_id[:, 2] - (depth_map_points * optimal_scale + optimal_offset)
         
-        print("Optimal scale and offset for image: ", img_name)
+        print(f"Optimal scale {optimal_scale} and offset {optimal_offset} for image {img_name}")
         print(f"Got an error of {Z.min()}, average difference between the images: {diff.mean()}")
 
         adjusted_depth_maps[img_name] = depth_maps[img_name] * optimal_scale + optimal_offset
+
 
     return adjusted_depth_maps
 
@@ -190,7 +202,7 @@ if __name__ == "__main__":
 
     dataset_path = "dataset"
     #create_depth_maps(dataset_path, save=True)
-    cam_intrinsics, cam_extrinsics, projected_points, rgb,  _ = project_points_to_cameras(dataset_path)
+    cam_intrinsics, cam_extrinsics, projected_points, transformed_points, rgb, errors = project_points_to_cameras(dataset_path)
     intrinsic = cam_intrinsics[1]
 
     # Visualize
