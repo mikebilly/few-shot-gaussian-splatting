@@ -221,12 +221,13 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, Ls, s_loss, el
         tb_writer.add_scalar('iter_time', elapsed, iteration)
     
     # Report test and samples of training set
+    previous_ld_test = 1000.0
     if iteration in testing_iterations:
         torch.cuda.empty_cache()
         validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
                               {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
 
-        previous_ld_test = 0.0
+        global previous_ld_test
 
         for config in validation_configs:
             if config['cameras'] and len(config['cameras']) > 0:
