@@ -138,7 +138,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             pass
         
         depth_prev_avg = depth_moving_avg.average()  
-        
+
         loss += opt.lambda_smoothness * Ls + opt.lambda_depth * Ld
         
         loss.backward()
@@ -155,7 +155,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, Ls, get_smoothness_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            keep_training = training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, Ls, get_smoothness_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            
+            if not keep_training:
+                print(f"Stopped training due to depth loss increase in test set, iter {iteration}")
+                scene.save(iteration)
+                break
+
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -213,12 +219,14 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, Ls, s_loss, el
         tb_writer.add_scalar('train_loss_patches/depth_loss', Ld.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/smoothness_loss', Ls.item(), iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
-
+    
     # Report test and samples of training set
     if iteration in testing_iterations:
         torch.cuda.empty_cache()
         validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
                               {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
+
+        previous_ld_test = 0.0
 
         for config in validation_configs:
             if config['cameras'] and len(config['cameras']) > 0:
@@ -257,11 +265,17 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, Ls, s_loss, el
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - depth_loss', ld_test, iteration)
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - smoothness_loss', ls_test, iteration)
+                
+                if (ld_test > previous_ld_test):
+                    return False
+
+                previous_ld_test = ld_test
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
             tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
         torch.cuda.empty_cache()
+    return True
 
 if __name__ == "__main__":
     # Set up command line argument parser
