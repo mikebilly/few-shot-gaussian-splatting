@@ -19,14 +19,12 @@ from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
 import uuid
 from tqdm import tqdm
-from utils.image_utils import psnr
+from utils.image_utils import psnr, apply_colormap
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 
 from depth_regularization.proj_utils import get_smoothness_loss
 
-import cv2
-import numpy as np
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -236,12 +234,16 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, elapsed, testi
                     depth = render['depth']
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
                     gt_depth = viewpoint.depth_map.cuda() * depth_range *  255.0 / (2 ** 16)
+
+                    gt_depth_vis  = apply_colormap(gt_depth / depth_range)
+                    depth_vis = apply_colormap(depth/ depth_range)
+                    
                     if tb_writer and (idx < 5):
                         tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
-                        tb_writer.add_images(config['name'] + "_view_{}/depth".format(viewpoint.image_name), depth[None]/depth_range, global_step=iteration)
+                        tb_writer.add_images(config['name'] + "_view_{}/depth".format(viewpoint.image_name), depth_vis, global_step=iteration)
                         if iteration == testing_iterations[0]:
                             tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
-                            tb_writer.add_images(config['name'] + "_view_{}/ground_truth_depth".format(viewpoint.image_name), gt_depth[None]/depth_range, global_step=iteration)
+                            tb_writer.add_images(config['name'] + "_view_{}/ground_truth_depth".format(viewpoint.image_name), gt_depth_vis, global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
                     ld_test += l1_loss(depth, gt_depth).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()

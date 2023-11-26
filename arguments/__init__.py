@@ -91,8 +91,8 @@ class OptimizationParams(ParamGroup):
 
         # depth regularization
         self.depth_regularization = True
-        self.lambda_depth =  0.0  #0.005
-        self.lambda_smoothness = 0.0 #0.003
+        self.lambda_depth =  0.03  #0.005
+        self.lambda_smoothness = 0.003 #0.003
         self.moving_avg_size = 1000
 
         super().__init__(parser, "Optimization Parameters")
