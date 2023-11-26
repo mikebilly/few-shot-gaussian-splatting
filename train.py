@@ -25,6 +25,7 @@ from arguments import ModelParams, PipelineParams, OptimizationParams
 
 from depth_regularization.proj_utils import get_smoothness_loss
 
+from collections import deque
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -35,7 +36,7 @@ except ImportError:
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
-    tb_writer = prepare_output_and_logger(dataset)
+    tb_writer = prepare_output_and_logger(dataset, opt)
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
@@ -53,6 +54,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
+
+    Ld_sum = 0.0
+    Ld_count = 0
+    Ld_prev_moving_avg = 1000.0
+    Ld_values = deque(maxlen=opt.moving_avg_window)
+
     for iteration in range(first_iter, opt.iterations + 1):        
         if network_gui.conn == None:
             network_gui.try_connect()
@@ -90,15 +97,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
         image, depth, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["depth"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-
-        #depth_np  = depth.detach().cpu().numpy()
-        #np.save(os.path.join(dataset.source_path, "depth", viewpoint_cam.image_name), depth_np)
         
         # Loss
         depth_range = 200
         gt_image = viewpoint_cam.original_image.cuda()
         gt_depth = viewpoint_cam.depth_map.cuda() * depth_range *  255.0 / (2 ** 16)
-
+        
         Ll1 = l1_loss(image, gt_image)
 
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
@@ -108,6 +112,24 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         Ld = l1_loss(depth, gt_depth)
 
         loss += opt.lambda_smoothness * Ls + opt.lambda_depth * Ld
+
+        if len(Ld_values) >= opt.moving_avg_window:
+            Ld_sum -= Ld_values.popleft()
+        Ld_values.append(Ld.item())
+        Ld_sum += Ld.item()
+
+        Ld_moving_avg = Ld_sum / len(Ld_values)
+
+        if Ld_moving_avg > Ld_prev_moving_avg and Ld_count > 1 and iteration > opt.moving_avg_window:
+            print("\n[ITER {}] Saving Gaussians, early stop because of Depth Loss".format(iteration))
+            scene.save(iteration)
+            break
+
+        if iteration % opt.moving_avg_window == 0:
+            print("Depth moving average: {}".format(Ld_moving_avg))
+        
+        Ld_prev_moving_avg = Ld_moving_avg
+        Ld_count += 1
         
         loss.backward()
 
@@ -150,7 +172,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
 
-def prepare_output_and_logger(args):    
+def prepare_output_and_logger(args, opt):    
     if not args.model_path:
         if os.getenv('OAR_JOB_ID'):
             unique_str=os.getenv('OAR_JOB_ID')
@@ -163,6 +185,8 @@ def prepare_output_and_logger(args):
     os.makedirs(args.model_path, exist_ok = True)
     with open(os.path.join(args.model_path, "cfg_args"), 'w') as cfg_log_f:
         cfg_log_f.write(str(Namespace(**vars(args))))
+        cfg_log_f.write("\n")
+        cfg_log_f.write(str(Namespace(**vars(opt))))
 
     # Create Tensorboard writer
     tb_writer = None
@@ -209,7 +233,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, elapsed, testi
                 psnr_test /= len(config['cameras'])
                 l1_test /= len(config['cameras'])
                 ld_test /= len(config['cameras'])  
-                print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
+                print("\n[ITER {}] Evaluating {}: L1 {} PSNR {} Depth L1 {}".format(iteration, config['name'], l1_test, psnr_test, ld_test))
                 if tb_writer:
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
@@ -230,7 +254,7 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[1_000, 2_000, 3_000, 7_000, 30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[1_000, 2_000, 3_000, 4_000, 5_000, 6_000, 7_000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
