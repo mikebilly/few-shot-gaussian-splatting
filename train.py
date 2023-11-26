@@ -138,10 +138,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             pass
         
         depth_prev_avg = depth_moving_avg.average()  
-
-        if iteration % 100 == 0:
-            print("Depth loss moving average: {}".format(depth_moving_avg.average()))
-
+        
         loss += opt.lambda_smoothness * Ls + opt.lambda_depth * Ld
         
         loss.backward()
@@ -158,7 +155,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, Ls, get_smoothness_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -209,11 +206,12 @@ def prepare_output_and_logger(args, opt):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
+def training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, Ls, s_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/depth_loss', Ld.item(), iteration)
+        tb_writer.add_scalar('train_loss_patches/smoothness_loss', Ls.item(), iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
 
     # Report test and samples of training set
@@ -226,6 +224,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, elapsed, testi
             if config['cameras'] and len(config['cameras']) > 0:
                 l1_test = 0.0
                 ld_test = 0.0
+                ls_test = 0.0
                 psnr_test = 0.0
                 depth_range = 200
                 for idx, viewpoint in enumerate(config['cameras']):
@@ -246,15 +245,18 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, elapsed, testi
                             tb_writer.add_images(config['name'] + "_view_{}/ground_truth_depth".format(viewpoint.image_name), gt_depth_vis, global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
                     ld_test += l1_loss(depth, gt_depth).mean().double()
+                    ls_test += s_loss(depth).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
                 psnr_test /= len(config['cameras'])
                 l1_test /= len(config['cameras'])
-                ld_test /= len(config['cameras'])  
+                ld_test /= len(config['cameras'])
+                ls_test /= len(config['cameras'])
                 print("\n[ITER {}] Evaluating {}: L1 {} PSNR {} Depth L1 {}".format(iteration, config['name'], l1_test, psnr_test, ld_test))
                 if tb_writer:
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - depth_loss', ld_test, iteration)
+                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - smoothness_loss', ls_test, iteration)
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
@@ -271,7 +273,7 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[1, 1_000, 2_000, 3_000, 4_000, 5_000, 6_000, 7_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[500, 1_000, 2_000, 3_000, 4_000, 5_000, 6_000, 7_000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[2_000, 3_000, 6_000, 7_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
