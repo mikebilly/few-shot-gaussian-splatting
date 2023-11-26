@@ -46,7 +46,7 @@ class ParamGroup:
 
 class ModelParams(ParamGroup): 
     def __init__(self, parser, sentinel=False):
-        self.sh_degree = 3
+        self.sh_degree = 1 #3
         self._source_path = ""
         self._model_path = ""
         self._images = "images"
@@ -71,7 +71,7 @@ class PipelineParams(ParamGroup):
 
 class OptimizationParams(ParamGroup):
     def __init__(self, parser):
-        self.iterations = 30_000
+        self.iterations = 7_000
         self.position_lr_init = 0.00016
         self.position_lr_final = 0.0000016
         self.position_lr_delay_mult = 0.01
@@ -83,8 +83,7 @@ class OptimizationParams(ParamGroup):
         self.percent_dense = 0.01
         self.lambda_dssim = 0.2
         self.densification_interval = 100
-        #self.opacity_reset_interval = 3000
-        self.opacity_reset_interval = 50000
+        self.opacity_reset_interval = 50000 #3000
         self.densify_from_iter = 500
         self.densify_until_iter = 15_000
         self.densify_grad_threshold = 0.0002
@@ -92,8 +91,9 @@ class OptimizationParams(ParamGroup):
 
         # depth regularization
         self.depth_regularization = True
-        self.lambda_depth = 0.0
-        self.lambda_smoothness = 0.0
+        self.lambda_depth =  0.0  #0.005
+        self.lambda_smoothness = 0.0 #0.003
+        self.moving_avg_size = 1000
 
         super().__init__(parser, "Optimization Parameters")
 

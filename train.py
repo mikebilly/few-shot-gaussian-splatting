@@ -25,13 +25,33 @@ from arguments import ModelParams, PipelineParams, OptimizationParams
 
 from depth_regularization.proj_utils import get_smoothness_loss
 
-from collections import deque
+import cv2
+import numpy as np
 
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
+
+class MovingAverage:
+    def __init__(self, size):
+        self.size = size
+        self.queue = torch.zeros(size)
+        self.sum = 0.0
+        self.index = 0
+
+    def update(self, val):
+        # Subtract the oldest value and add the new value
+        self.sum -= self.queue[self.index]
+        self.sum += val
+        self.queue[self.index] = val
+
+        # Update the index
+        self.index = (self.index + 1) % self.size
+
+    def average(self):
+        return self.sum / self.size
 
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
@@ -55,10 +75,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
 
-    Ld_sum = 0.0
-    Ld_count = 0
-    Ld_prev_moving_avg = 1000.0
-    Ld_values = deque(maxlen=opt.moving_avg_window)
+    depth_moving_avg = MovingAverage(size=opt.moving_avg_size)
+    depth_prev_avg = 0.0
 
     for iteration in range(first_iter, opt.iterations + 1):        
         if network_gui.conn == None:
@@ -102,7 +120,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         depth_range = 200
         gt_image = viewpoint_cam.original_image.cuda()
         gt_depth = viewpoint_cam.depth_map.cuda() * depth_range *  255.0 / (2 ** 16)
-        
+
         Ll1 = l1_loss(image, gt_image)
 
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
@@ -111,25 +129,22 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         Ls = get_smoothness_loss(depth)
         Ld = l1_loss(depth, gt_depth)
 
-        loss += opt.lambda_smoothness * Ls + opt.lambda_depth * Ld
 
-        if len(Ld_values) >= opt.moving_avg_window:
-            Ld_sum -= Ld_values.popleft()
-        Ld_values.append(Ld.item())
-        Ld_sum += Ld.item()
-
-        Ld_moving_avg = Ld_sum / len(Ld_values)
-
-        if Ld_moving_avg > Ld_prev_moving_avg and Ld_count > 1 and iteration > opt.moving_avg_window:
-            print("\n[ITER {}] Saving Gaussians, early stop because of Depth Loss".format(iteration))
-            scene.save(iteration)
-            break
-
-        if iteration % opt.moving_avg_window == 0:
-            print("Depth moving average: {}".format(Ld_moving_avg))
+        if iteration > 1000:
+            depth_moving_avg.update(Ld.item())
         
-        Ld_prev_moving_avg = Ld_moving_avg
-        Ld_count += 1
+        if depth_moving_avg.average() > depth_prev_avg and iteration > 1300:
+            #print(f"Stopped training due to depth loss increase iter {iteration}")
+            #scene.save(iteration)
+            #break
+            pass
+        
+        depth_prev_avg = depth_moving_avg.average()  
+
+        if iteration % 100 == 0:
+            print("Depth loss moving average: {}".format(depth_moving_avg.average()))
+
+        loss += opt.lambda_smoothness * Ls + opt.lambda_depth * Ld
         
         loss.backward()
 
@@ -255,7 +270,7 @@ if __name__ == "__main__":
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[1_000, 2_000, 3_000, 4_000, 5_000, 6_000, 7_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[2_000, 3_000, 6_000, 7_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
