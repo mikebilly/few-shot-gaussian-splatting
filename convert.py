@@ -8,7 +8,6 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
-
 import os
 import logging
 from argparse import ArgumentParser
@@ -120,5 +119,9 @@ if(args.resize):
         if exit_code != 0:
             logging.error(f"12.5% resize failed with code {exit_code}. Exiting.")
             exit(exit_code)
+
+from depth_regularization.main import preprocess_depth
+
+preprocess_depth(args.source_path)
 
 print("Done.")
