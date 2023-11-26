@@ -6,7 +6,9 @@ This is my **unofficial** implementation of: Depth-Regularized Optimization for 
 ### Comparison (5 views)
 <img src="https://github.com/pablodawson/few-shot-gaussian-splatting/assets/74978011/b0c8e37b-cd4f-4f4c-b62c-15590a924bac" width="300" > <img src="https://github.com/pablodawson/few-shot-gaussian-splatting/assets/74978011/bc627a44-b1d7-4acd-b666-c2f851c56b8a" width="300" >
 
-*They solve this problem by:*
+Test PNSR 8.55 vs 19.45 (!)
+
+*They achieve this by:*
 
 ### Depth regularization
  
