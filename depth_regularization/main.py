@@ -1,11 +1,15 @@
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
 from depth_regularization.proj_utils import create_depth_maps_zoe, project_points_to_cameras, find_optimal_offset_scale
 import numpy as np
-import os
+
 from PIL import Image
 
 def preprocess_depth(dataset_path):
 
-    depth_maps = create_depth_maps_zoe(dataset_path, save=True)
+    depth_maps = create_depth_maps_zoe(dataset_path, save=True, model_type="ZoeD_NK")
 
     cam_intrinsics, cam_extrinsics, projected_points, transformed_points, rgb, error = project_points_to_cameras(dataset_path)
 
