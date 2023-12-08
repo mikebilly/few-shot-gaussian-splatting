@@ -213,6 +213,7 @@ def prepare_output_and_logger(args, opt):
     return tb_writer
 
 def training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, Ls, s_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
+    global previous_ld_test
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
@@ -226,8 +227,6 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ld, Ls, s_loss, el
         torch.cuda.empty_cache()
         validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
                               {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
-
-        global previous_ld_test
 
         for config in validation_configs:
             if config['cameras'] and len(config['cameras']) > 0:
